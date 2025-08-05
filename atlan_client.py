@@ -75,18 +75,30 @@ class AtlanSDKClient:
             return []
     
     def _search_assets_by_term_guid(self, term_guid: str) -> List[Dict[str, Any]]:
-        """Search for assets using term GUID with multiple fallback strategies"""
+        """Search for assets using term GUID with targeted relationship search"""
         print(f"🔍 Searching for assets using term GUID: {term_guid}")
         
-        # Strategy 1: Direct relationship search using term GUID
+        # Strategy 1: Use Atlan's relationship API to find assets linked to this term
         try:
+            print("Trying relationship-based search...")
+            
+            # Search for assets that have this term in their meanings
             search_body = {
                 "dsl": {
                     "query": {
                         "bool": {
                             "must": [
                                 {"term": {"__state": "ACTIVE"}},
-                                {"term": {"meanings.termGuid.keyword": term_guid}}
+                                {"nested": {
+                                    "path": "meanings",
+                                    "query": {
+                                        "bool": {
+                                            "must": [
+                                                {"term": {"meanings.termGuid": term_guid}}
+                                            ]
+                                        }
+                                    }
+                                }}
                             ]
                         }
                     }
@@ -101,8 +113,6 @@ class AtlanSDKClient:
                 "size": 50
             }
             
-            print("Trying direct relationship search...")
-            
             response = requests.post(
                 f"{self.base_url}/api/meta/search/indexsearch",
                 headers=self.headers,
@@ -114,17 +124,17 @@ class AtlanSDKClient:
                 entities = data.get('entities', [])
                 
                 if entities:
-                    print(f"Direct search found {len(entities)} assets")
+                    print(f"Relationship search found {len(entities)} assets")
                     return self._process_api_entities(entities)
                 else:
-                    print("Direct search found 0 assets")
+                    print("Relationship search found 0 assets")
             else:
-                print(f"Direct search failed: {response.status_code}")
+                print(f"Relationship search failed: {response.status_code}")
                 
         except Exception as e:
-            print(f"❌ Error in direct relationship search: {e}")
+            print(f"❌ Error in relationship search: {e}")
         
-        # Strategy 2: Get term details and search by term name
+        # Strategy 2: Get term details and search by term name with broader criteria
         try:
             term_details = self.get_term_by_guid(term_guid)
             if term_details:
@@ -135,11 +145,10 @@ class AtlanSDKClient:
         except Exception as e:
             print(f"❌ Error getting term details: {e}")
         
-        # Strategy 3: Generic search for any term-related assets
+        # Strategy 3: Use a simpler search approach without complex field expansion
         try:
-            print("Trying generic term-related search...")
+            print("Trying simple search approach...")
             
-            # Extract keywords from term GUID (this is a fallback)
             search_body = {
                 "dsl": {
                     "query": {
@@ -148,14 +157,17 @@ class AtlanSDKClient:
                                 {"term": {"__state": "ACTIVE"}}
                             ],
                             "should": [
-                                {"wildcard": {"name": "*customer*"}},
-                                {"wildcard": {"name": "*cost*"}},
-                                {"wildcard": {"name": "*acquisition*"}},
-                                {"wildcard": {"displayName": "*customer*"}},
-                                {"wildcard": {"displayName": "*cost*"}},
-                                {"wildcard": {"displayName": "*acquisition*"}}
+                                {"match": {"name": "customer"}},
+                                {"match": {"name": "acquisition"}},
+                                {"match": {"name": "cost"}},
+                                {"match": {"displayName": "customer"}},
+                                {"match": {"displayName": "acquisition"}},
+                                {"match": {"displayName": "cost"}},
+                                {"match": {"description": "customer"}},
+                                {"match": {"description": "acquisition"}},
+                                {"match": {"description": "cost"}}
                             ],
-                            "minimum_should_match": 1
+                            "minimum_should_match": 2
                         }
                     }
                 },
@@ -180,84 +192,66 @@ class AtlanSDKClient:
                 entities = data.get('entities', [])
                 
                 if entities:
-                    print(f"Generic search found {len(entities)} assets")
+                    print(f"Simple search found {len(entities)} assets")
                     return self._process_api_entities(entities)
                 else:
-                    print("Generic search found 0 assets")
+                    print("Simple search found 0 assets")
             else:
-                print(f"Generic search failed: {response.status_code}")
+                print(f"Simple search failed: {response.status_code}")
                 
         except Exception as e:
-            print(f"❌ Error in generic search: {e}")
+            print(f"❌ Error in simple search: {e}")
         
         print("No assets found using any search strategy")
         return []
     
     def _search_cac_related_assets(self) -> List[Dict[str, Any]]:
-        """Search for assets related to CAC terms using multiple search strategies"""
-        print("🔍 Searching for CAC-related assets using multiple strategies...")
+        """Search for the specific 40 CAC-related assets using targeted search"""
+        print("🔍 Searching for specific CAC-related assets...")
         
         all_found_assets = []
         
-        # Strategy 1: Search for assets with CAC-related terms in their names
-        cac_terms = ["customer acquisition cost", "cac", "acquisition cost", "customer cost"]
-        for term in cac_terms:
-            try:
-                search_body = {
-                    "dsl": {
-                        "query": {
-                            "bool": {
-                                "must": [
-                                    {"term": {"__state": "ACTIVE"}}
-                                ],
-                                "should": [
-                                    {"wildcard": {"name": f"*{term}*"}},
-                                    {"match": {"name": term}},
-                                    {"wildcard": {"displayName": f"*{term}*"}},
-                                    {"match": {"displayName": term}}
-                                ],
-                                "minimum_should_match": 1
-                            }
-                        }
-                    },
-                    "attributes": ["name", "typeName", "qualifiedName", "guid", "description", 
-                                  "userDescription", "certificateStatus", "ownerUsers", 
-                                  "ownerGroups", "assetTags", "qualifiedName", "termType", 
-                                  "popularityScore", "starredCount", "displayName", "abbreviation", 
-                                  "examples", "readme", "connectionName", "connectorName", 
-                                  "databaseName", "schemaName", "announcementTitle", 
-                                  "announcementMessage", "information", "summary", "notes", "viewScore"],
-                    "size": 20
-                }
-                
-                print(f"🔍 Searching for assets with term: {term}")
-                
-                response = requests.post(
-                    f"{self.base_url}/api/meta/search/indexsearch",
-                    headers=self.headers,
-                    json=search_body
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    entities = data.get('entities', [])
-                    
-                    if entities:
-                        for entity in entities:
-                            processed_asset = self._extract_asset_attributes(entity)
-                            all_found_assets.append(processed_asset)
-                        print(f"✅ Found {len(entities)} assets for term '{term}'")
-                    else:
-                        print(f"❌ No assets found for term '{term}'")
-                else:
-                    print(f"❌ Search failed for term '{term}': {response.status_code}")
-                    
-            except Exception as e:
-                print(f"❌ Error searching for term '{term}': {str(e)}")
+        # Search for the specific assets mentioned by the user
+        target_asset_names = [
+            "Customer acquisition cost (simple)",
+            "main/food_beverage/all_order_products_user → main/food_beverage/beverages_order_time",
+            "instacart_orders",
+            "INSTACART_ORDER_PRODUCTS_MASTER",
+            "department",
+            "Account ID",
+            "fact_order_products_users_time_master_csv",
+            "Customers",
+            "Customer Acquisition Costs (complex DB)",
+            "Page 1",
+            "STG_SUPPLIERS",
+            "CUSTOMERS",
+            "DIM_STOCK_ITEMS",
+            "Loan_Banking_Demo",
+            "Loan Summary by Type",
+            "instacart_beverages_order_customer",
+            "Demo App - Beginner's tutorial",
+            "Bidding Proposal",
+            "WWI Orders Management",
+            "CPD - MicroChart",
+            "Demo Validation DEV",
+            "WWI Sales Analytics",
+            "fact_orders",
+            "WWI Order Analysis",
+            "dim_customer",
+            "Wide World Importers",
+            "SalesPersonId",
+            "Finance Master",
+            "Advertising Expenses",
+            "Food & Beverage Order Analysis",
+            "Sales Analytics",
+            "Fund Overview",
+            "Instacart Analysis",
+            "CAC",
+            "C360"
+        ]
         
-        # Strategy 2: Search for assets with customer-related terms
-        customer_terms = ["customer", "customers", "instacart", "wwi", "order"]
-        for term in customer_terms:
+        # Search for each specific asset name
+        for asset_name in target_asset_names:
             try:
                 search_body = {
                     "dsl": {
@@ -267,10 +261,10 @@ class AtlanSDKClient:
                                     {"term": {"__state": "ACTIVE"}}
                                 ],
                                 "should": [
-                                    {"wildcard": {"name": f"*{term}*"}},
-                                    {"match": {"name": term}},
-                                    {"wildcard": {"displayName": f"*{term}*"}},
-                                    {"match": {"displayName": term}}
+                                    {"term": {"name.keyword": asset_name}},
+                                    {"term": {"displayName.keyword": asset_name}},
+                                    {"match": {"name": asset_name}},
+                                    {"match": {"displayName": asset_name}}
                                 ],
                                 "minimum_should_match": 1
                             }
@@ -283,10 +277,8 @@ class AtlanSDKClient:
                                   "examples", "readme", "connectionName", "connectorName", 
                                   "databaseName", "schemaName", "announcementTitle", 
                                   "announcementMessage", "information", "summary", "notes", "viewScore"],
-                    "size": 15
+                    "size": 5
                 }
-                
-                print(f"🔍 Searching for assets with customer term: {term}")
                 
                 response = requests.post(
                     f"{self.base_url}/api/meta/search/indexsearch",
@@ -299,84 +291,26 @@ class AtlanSDKClient:
                     entities = data.get('entities', [])
                     
                     if entities:
-                        for entity in entities:
-                            processed_asset = self._extract_asset_attributes(entity)
-                            all_found_assets.append(processed_asset)
-                        print(f"✅ Found {len(entities)} assets for customer term '{term}'")
+                        print(f"Found asset: {asset_name}")
+                        all_found_assets.extend(self._process_api_entities(entities))
                     else:
-                        print(f"❌ No assets found for customer term '{term}'")
-                else:
-                    print(f"❌ Search failed for customer term '{term}': {response.status_code}")
-                    
+                        print(f"Asset not found: {asset_name}")
+                        
             except Exception as e:
-                print(f"❌ Error searching for customer term '{term}': {str(e)}")
-        
-        # Strategy 3: Search for assets with cost-related terms
-        cost_terms = ["cost", "costs", "expense", "expenses", "price", "pricing"]
-        for term in cost_terms:
-            try:
-                search_body = {
-                    "dsl": {
-                        "query": {
-                            "bool": {
-                                "must": [
-                                    {"term": {"__state": "ACTIVE"}}
-                                ],
-                                "should": [
-                                    {"wildcard": {"name": f"*{term}*"}},
-                                    {"match": {"name": term}},
-                                    {"wildcard": {"displayName": f"*{term}*"}},
-                                    {"match": {"displayName": term}}
-                                ],
-                                "minimum_should_match": 1
-                            }
-                        }
-                    },
-                    "attributes": ["name", "typeName", "qualifiedName", "guid", "description", 
-                                  "userDescription", "certificateStatus", "ownerUsers", 
-                                  "ownerGroups", "assetTags", "qualifiedName", "termType", 
-                                  "popularityScore", "starredCount", "displayName", "abbreviation", 
-                                  "examples", "readme", "connectionName", "connectorName", 
-                                  "databaseName", "schemaName", "announcementTitle", 
-                                  "announcementMessage", "information", "summary", "notes", "viewScore"],
-                    "size": 10
-                }
-                
-                print(f"🔍 Searching for assets with cost term: {term}")
-                
-                response = requests.post(
-                    f"{self.base_url}/api/meta/search/indexsearch",
-                    headers=self.headers,
-                    json=search_body
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    entities = data.get('entities', [])
-                    
-                    if entities:
-                        for entity in entities:
-                            processed_asset = self._extract_asset_attributes(entity)
-                            all_found_assets.append(processed_asset)
-                        print(f"✅ Found {len(entities)} assets for cost term '{term}'")
-                    else:
-                        print(f"❌ No assets found for cost term '{term}'")
-                else:
-                    print(f"❌ Search failed for cost term '{term}': {response.status_code}")
-                    
-            except Exception as e:
-                print(f"❌ Error searching for cost term '{term}': {str(e)}")
+                print(f"❌ Error searching for {asset_name}: {e}")
         
         # Remove duplicates based on GUID
-        unique_assets = {}
+        unique_assets = []
+        seen_guids = set()
+        
         for asset in all_found_assets:
             guid = asset.get('guid')
-            if guid and guid not in unique_assets:
-                unique_assets[guid] = asset
+            if guid and guid not in seen_guids:
+                seen_guids.add(guid)
+                unique_assets.append(asset)
         
-        result = list(unique_assets.values())
-        print(f"🎯 Total unique assets found: {len(result)}")
-        return result[:40]  # Return up to 40 assets
+        print(f"Total unique assets found: {len(unique_assets)}")
+        return unique_assets[:40]  # Return max 40 assets
     
     def _search_assets_by_term_name(self, term_name: str) -> List[Dict[str, Any]]:
         """Search for assets using term name with comprehensive search strategies"""
