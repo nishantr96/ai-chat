@@ -40,7 +40,7 @@ class AtlanSDKClient:
             term_name: Name of the term (for debugging)
             
         Returns:
-            List of assets linked to the term
+            List of assets linked to the term (limited to 40)
         """
         print(f"🔍 Searching for assets using term GUID: {term_guid}")
         if term_name:
@@ -51,21 +51,21 @@ class AtlanSDKClient:
             assets = self._search_assets_by_term_guid(term_guid)
             if assets:
                 print(f"✅ Found {len(assets)} assets using term GUID search")
-                return assets[:50]  # Limit to 50 results
+                return assets[:40]  # Limit to 40 results
             
             # Method 2: If no assets found, try searching by term name (more targeted)
             if term_name:
                 assets = self._search_assets_by_term_name(term_name)
                 if assets:
                     print(f"✅ Found {len(assets)} assets using term name search")
-                    return assets[:50]  # Limit to 50 results
+                    return assets[:40]  # Limit to 40 results
             
             # Method 3: Try broader search for related terms (most restrictive)
             if term_name:
                 assets = self._search_assets_by_related_terms(term_name)
                 if assets:
                     print(f"✅ Found {len(assets)} assets using related terms search")
-                    return assets[:50]  # Limit to 50 results
+                    return assets[:40]  # Limit to 40 results
             
             print("❌ No assets found")
             return []
@@ -92,7 +92,7 @@ class AtlanSDKClient:
                 attributes=["name", "typeName", "qualifiedName", "guid", "description", 
                           "userDescription", "certificateStatus", "ownerUsers", 
                           "ownerGroups", "meanings", "connectorName", "connectionName"],
-                size=20  # Reduced from 100 to 20
+                size=40  # Limit to 40 results
             )
             
             response = self.client.asset.search(request)
@@ -124,7 +124,7 @@ class AtlanSDKClient:
                 attributes=["name", "typeName", "qualifiedName", "guid", "description", 
                           "userDescription", "certificateStatus", "ownerUsers", 
                           "ownerGroups", "meanings", "connectorName", "connectionName"],
-                size=20  # Reduced from 100 to 20
+                size=40  # Limit to 40 results
             )
             
             response = self.client.asset.search(request)
@@ -156,7 +156,7 @@ class AtlanSDKClient:
                 search_terms.append('cac')
             
             assets = []
-            for search_term in search_terms[:2]:  # Limit to first 2 terms (reduced from 3)
+            for search_term in search_terms[:1]:  # Limit to first 1 term (reduced from 2)
                 try:
                     query = DSL(
                         query=Bool(
@@ -172,7 +172,7 @@ class AtlanSDKClient:
                         attributes=["name", "typeName", "qualifiedName", "guid", "description", 
                                   "userDescription", "certificateStatus", "ownerUsers", 
                                   "ownerGroups", "meanings", "connectorName", "connectionName"],
-                        size=15  # Reduced from 50 to 15
+                        size=20  # Reduced to 20 to avoid too many results
                     )
                     
                     response = self.client.asset.search(request)
@@ -192,7 +192,7 @@ class AtlanSDKClient:
                 if guid and guid not in unique_assets:
                     unique_assets[guid] = asset
             
-            return list(unique_assets.values())
+            return list(unique_assets.values())[:40]  # Ensure final limit of 40
             
         except Exception as e:
             print(f"❌ Error in related terms search: {e}")
