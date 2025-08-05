@@ -75,30 +75,84 @@ class AtlanSDKClient:
             return []
     
     def _search_assets_by_term_guid(self, term_guid: str) -> List[Dict[str, Any]]:
-        """Search for assets that have the term as a meaning"""
+        """Search for assets that have the term as a meaning using direct API call"""
         try:
-            # Create a DSL query to find assets with this term as a meaning
-            query = DSL(
-                query=Bool(
-                    must=[
-                        Term(field="meanings.termGuid.keyword", value=term_guid),
-                        Term(field="__state", value="ACTIVE")
-                    ]
-                )
-            )
+            print(f"🔍 Searching for assets with term GUID: {term_guid}")
             
-            request = IndexSearchRequest(
-                dsl=query,
-                attributes=["name", "typeName", "qualifiedName", "guid", "description", 
-                          "userDescription", "certificateStatus", "ownerUsers", 
-                          "ownerGroups", "meanings", "connectorName", "connectionName"],
-                size=40  # Limit to 40 results
-            )
+            # Method 1: Try direct relationship search
+            search_body = {
+                "dsl": {
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"__state": "ACTIVE"}},
+                                {"term": {"meanings.termGuid.keyword": term_guid}}
+                            ]
+                        }
+                    }
+                },
+                "attributes": [
+                    "name", "typeName", "qualifiedName", "guid", "description", 
+                    "userDescription", "certificateStatus", "ownerUsers", 
+                    "ownerGroups", "meanings", "connectorName", "connectionName"
+                ],
+                "size": 40
+            }
             
-            response = self.client.asset.search(request)
+            url = f"{self.base_url}/api/meta/search/indexsearch"
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Content-Type": "application/json"
+            }
             
-            if response and hasattr(response, '_assets'):
-                return self._process_entities(response._assets)
+            print("Trying direct relationship search...")
+            response = requests.post(url, json=search_body, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'entities' in data and data['entities']:
+                    print(f"Direct search found {len(data['entities'])} assets")
+                    return self._process_api_entities(data['entities'])
+                else:
+                    print("Direct search found 0 assets")
+            
+            # Method 2: Try simple text search for term GUID
+            search_body = {
+                "dsl": {
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"__state": "ACTIVE"}}
+                            ],
+                            "should": [
+                                {"wildcard": {"name": f"*{term_guid}*"}},
+                                {"wildcard": {"description": f"*{term_guid}*"}},
+                                {"wildcard": {"userDescription": f"*{term_guid}*"}}
+                            ],
+                            "minimum_should_match": 1
+                        }
+                    }
+                },
+                "attributes": [
+                    "name", "typeName", "qualifiedName", "guid", "description", 
+                    "userDescription", "certificateStatus", "ownerUsers", 
+                    "ownerGroups", "meanings", "connectorName", "connectionName"
+                ],
+                "size": 40
+            }
+            
+            print("Trying simple text search for term GUID...")
+            response = requests.post(url, json=search_body, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'entities' in data and data['entities']:
+                    print(f"Text search found {len(data['entities'])} assets")
+                    return self._process_api_entities(data['entities'])
+                else:
+                    print("No assets found in text search either")
+            else:
+                print(f"Search request failed: {response.status_code} - {response.text}")
             
             return []
             
@@ -107,30 +161,55 @@ class AtlanSDKClient:
             return []
     
     def _search_assets_by_term_name(self, term_name: str) -> List[Dict[str, Any]]:
-        """Search for assets by term name"""
+        """Search for assets by term name using direct API call"""
         try:
-            # Create a DSL query to find assets with this term name
-            query = DSL(
-                query=Bool(
-                    must=[
-                        Match(field="name", query=term_name),
-                        Term(field="__state", value="ACTIVE")
-                    ]
-                )
-            )
+            print(f"🔍 Searching for assets with term name: {term_name}")
             
-            request = IndexSearchRequest(
-                dsl=query,
-                attributes=["name", "typeName", "qualifiedName", "guid", "description", 
-                          "userDescription", "certificateStatus", "ownerUsers", 
-                          "ownerGroups", "meanings", "connectorName", "connectionName"],
-                size=40  # Limit to 40 results
-            )
+            # Create a comprehensive search for assets related to the term
+            search_body = {
+                "dsl": {
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"__state": "ACTIVE"}}
+                            ],
+                            "should": [
+                                {"wildcard": {"name": f"*{term_name}*"}},
+                                {"wildcard": {"description": f"*{term_name}*"}},
+                                {"wildcard": {"userDescription": f"*{term_name}*"}},
+                                {"match": {"name": term_name}},
+                                {"match": {"description": term_name}},
+                                {"match": {"userDescription": term_name}}
+                            ],
+                            "minimum_should_match": 1
+                        }
+                    }
+                },
+                "attributes": [
+                    "name", "typeName", "qualifiedName", "guid", "description", 
+                    "userDescription", "certificateStatus", "ownerUsers", 
+                    "ownerGroups", "meanings", "connectorName", "connectionName"
+                ],
+                "size": 40
+            }
             
-            response = self.client.asset.search(request)
+            url = f"{self.base_url}/api/meta/search/indexsearch"
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Content-Type": "application/json"
+            }
             
-            if response and hasattr(response, '_assets'):
-                return self._process_entities(response._assets)
+            response = requests.post(url, json=search_body, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'entities' in data and data['entities']:
+                    print(f"Term name search found {len(data['entities'])} assets")
+                    return self._process_api_entities(data['entities'])
+                else:
+                    print("Term name search found 0 assets")
+            else:
+                print(f"Search request failed: {response.status_code} - {response.text}")
             
             return []
             
@@ -139,13 +218,15 @@ class AtlanSDKClient:
             return []
     
     def _search_assets_by_related_terms(self, term_name: str) -> List[Dict[str, Any]]:
-        """Search for assets using broader related terms"""
+        """Search for assets using broader related terms with direct API call"""
         try:
+            print(f"🔍 Searching for assets with related terms: {term_name}")
+            
             # Extract key words from term name for broader search
             key_words = term_name.lower().split()
             search_terms = []
             
-            # Add variations of the term (more restrictive)
+            # Add variations of the term
             if 'customer' in key_words:
                 search_terms.append('customer')
             if 'acquisition' in key_words:
@@ -155,31 +236,59 @@ class AtlanSDKClient:
             if 'cac' in key_words:
                 search_terms.append('cac')
             
-            assets = []
-            for search_term in search_terms[:1]:  # Limit to first 1 term (reduced from 2)
+            # If no specific terms found, use the original term
+            if not search_terms:
+                search_terms = [term_name.lower()]
+            
+            all_assets = []
+            
+            for search_term in search_terms[:2]:  # Limit to 2 terms
                 try:
-                    query = DSL(
-                        query=Bool(
-                            must=[
-                                Match(field="name", query=search_term),
-                                Term(field="__state", value="ACTIVE")
-                            ]
-                        )
-                    )
+                    search_body = {
+                        "dsl": {
+                            "query": {
+                                "bool": {
+                                    "must": [
+                                        {"term": {"__state": "ACTIVE"}}
+                                    ],
+                                    "should": [
+                                        {"wildcard": {"name": f"*{search_term}*"}},
+                                        {"wildcard": {"description": f"*{search_term}*"}},
+                                        {"wildcard": {"userDescription": f"*{search_term}*"}},
+                                        {"match": {"name": search_term}},
+                                        {"match": {"description": search_term}},
+                                        {"match": {"userDescription": search_term}}
+                                    ],
+                                    "minimum_should_match": 1
+                                }
+                            }
+                        },
+                        "attributes": [
+                            "name", "typeName", "qualifiedName", "guid", "description", 
+                            "userDescription", "certificateStatus", "ownerUsers", 
+                            "ownerGroups", "meanings", "connectorName", "connectionName"
+                        ],
+                        "size": 30  # Get more results for broader search
+                    }
                     
-                    request = IndexSearchRequest(
-                        dsl=query,
-                        attributes=["name", "typeName", "qualifiedName", "guid", "description", 
-                                  "userDescription", "certificateStatus", "ownerUsers", 
-                                  "ownerGroups", "meanings", "connectorName", "connectionName"],
-                        size=20  # Reduced to 20 to avoid too many results
-                    )
+                    url = f"{self.base_url}/api/meta/search/indexsearch"
+                    headers = {
+                        "Authorization": f"Bearer {self.api_token}",
+                        "Content-Type": "application/json"
+                    }
                     
-                    response = self.client.asset.search(request)
+                    response = requests.post(url, json=search_body, headers=headers)
                     
-                    if response and hasattr(response, '_assets'):
-                        found_assets = self._process_entities(response._assets)
-                        assets.extend(found_assets)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if 'entities' in data and data['entities']:
+                            found_assets = self._process_api_entities(data['entities'])
+                            all_assets.extend(found_assets)
+                            print(f"Found {len(found_assets)} assets for term '{search_term}'")
+                        else:
+                            print(f"No assets found for term '{search_term}'")
+                    else:
+                        print(f"Search request failed for '{search_term}': {response.status_code}")
                         
                 except Exception as e:
                     print(f"❌ Error searching for term '{search_term}': {e}")
@@ -187,16 +296,28 @@ class AtlanSDKClient:
             
             # Remove duplicates based on GUID
             unique_assets = {}
-            for asset in assets:
+            for asset in all_assets:
                 guid = asset.get('guid')
                 if guid and guid not in unique_assets:
                     unique_assets[guid] = asset
             
-            return list(unique_assets.values())[:40]  # Ensure final limit of 40
+            result = list(unique_assets.values())[:40]  # Ensure final limit of 40
+            print(f"Related terms search found {len(result)} unique assets")
+            return result
             
         except Exception as e:
             print(f"❌ Error in related terms search: {e}")
             return []
+    
+    def _process_api_entities(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Process entities from direct API response"""
+        processed = []
+        for entity in entities:
+            if entity:
+                result = self._extract_asset_attributes(entity)
+                if result:
+                    processed.append(result)
+        return processed
     
     def _process_entities(self, entities: List) -> List[Dict[str, Any]]:
         """Process and format entities from SDK response"""
