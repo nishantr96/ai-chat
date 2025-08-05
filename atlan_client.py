@@ -32,68 +32,132 @@ class AtlanSDKClient:
             return False
     
     def find_assets_with_term(self, term_guid: str, term_name: str = None) -> List[Dict[str, Any]]:
-        """
-        Find assets linked to a specific glossary term using Atlan SDK FluentSearch.
+        """Find all assets linked to a glossary term using proper Atlan SDK methods"""
+        print(f"🔍 Finding assets linked to term: {term_name or term_guid}")
         
-        Args:
-            term_guid: GUID of the glossary term
-            term_name: Name of the term (for debugging)
-            
-        Returns:
-            List of assets linked to the term (limited to 40)
-        """
-        print(f"🔍 Searching for assets linked to term GUID: {term_guid}")
-        if term_name:
-            print(f"🏷️  Term name: {term_name}")
+        all_assets = []
         
         try:
-            # Method 1: Use FluentSearch to find assets linked to this term
-            print("Trying FluentSearch for linked assets...")
+            # Strategy 1: Use Atlan's relationship API to find assets with this term in their meanings
+            print("Trying relationship-based search using Atlan SDK...")
             
             # Search for assets that have this term in their meanings
-            linked_assets = FluentSearch().where(
-                GlossaryTerm.guid.eq(term_guid)
-            ).include_on_results(
-                "guid", "typeName", "name", "qualifiedName", "description", 
-                "userDescription", "certificateStatus", "ownerUsers", 
-                "ownerGroups", "assetTags", "qualifiedName", "termType", 
-                "popularityScore", "starredCount", "displayName", "abbreviation", 
-                "examples", "readme", "connectionName", "connectorName", 
-                "databaseName", "schemaName", "announcementTitle", 
-                "announcementMessage", "information", "summary", "notes", "viewScore"
-            ).to_list()
+            search_body = {
+                "dsl": {
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"__state": "ACTIVE"}},
+                                {"nested": {
+                                    "path": "meanings",
+                                    "query": {
+                                        "term": {"meanings.termGuid.keyword": term_guid}
+                                    }
+                                }}
+                            ]
+                        }
+                    }
+                },
+                "attributes": [
+                    "guid", "typeName", "name", "qualifiedName", "description", 
+                    "userDescription", "certificateStatus", "ownerUsers", "ownerGroups",
+                    "assetTags", "connectionName", "connectorName", "viewScore",
+                    "popularityScore", "starredCount", "displayName"
+                ],
+                "size": 50
+            }
             
-            if linked_assets:
-                print(f"✅ FluentSearch found {len(linked_assets)} linked assets")
-                return self._process_sdk_assets(linked_assets)[:40]  # Limit to 40 results
+            response = requests.post(
+                f"{self.base_url}/api/meta/search/indexsearch",
+                headers={
+                    "Authorization": f"Bearer {self.api_token}",
+                    "Content-Type": "application/json"
+                },
+                json=search_body
+            )
             
-            # Method 2: If no assets found with FluentSearch, try alternative approach
-            print("FluentSearch found 0 assets, trying alternative search...")
-            
-            # Try searching for assets that reference this term
-            alternative_assets = FluentSearch().where(
-                GlossaryTerm.qualified_name.contains(term_name if term_name else "")
-            ).include_on_results(
-                "guid", "typeName", "name", "qualifiedName", "description", 
-                "userDescription", "certificateStatus", "ownerUsers", 
-                "ownerGroups", "assetTags", "qualifiedName", "termType", 
-                "popularityScore", "starredCount", "displayName", "abbreviation", 
-                "examples", "readme", "connectionName", "connectorName", 
-                "databaseName", "schemaName", "announcementTitle", 
-                "announcementMessage", "information", "summary", "notes", "viewScore"
-            ).to_list()
-            
-            if alternative_assets:
-                print(f"✅ Alternative search found {len(alternative_assets)} assets")
-                return self._process_sdk_assets(alternative_assets)[:40]  # Limit to 40 results
-            
-            print("❌ No assets found using SDK methods")
-            return []
-            
+            if response.status_code == 200:
+                data = response.json()
+                if "entities" in data and data["entities"]:
+                    print(f"✅ Relationship search found {len(data['entities'])} assets")
+                    assets = self._process_api_entities(data["entities"])
+                    all_assets.extend(assets)
+                else:
+                    print("❌ No assets found in relationship search")
+            else:
+                print(f"❌ Relationship search failed: {response.status_code}")
+                
         except Exception as e:
-            print(f"❌ Error in SDK asset search: {e}")
-            # Fallback to direct API search if SDK fails
-            return self._fallback_api_search(term_guid, term_name)
+            print(f"❌ Relationship search error: {e}")
+        
+        # Strategy 2: If no assets found, try searching by term name in asset descriptions
+        if not all_assets and term_name:
+            print(f"Trying fallback search by term name: {term_name}")
+            try:
+                # Search for assets that mention the term name in their description or name
+                search_body = {
+                    "dsl": {
+                        "query": {
+                            "bool": {
+                                "must": [
+                                    {"term": {"__state": "ACTIVE"}},
+                                    {"bool": {
+                                        "should": [
+                                            {"wildcard": {"name": f"*{term_name.lower()}*"}},
+                                            {"wildcard": {"displayName": f"*{term_name.lower()}*"}},
+                                            {"wildcard": {"description": f"*{term_name.lower()}*"}},
+                                            {"wildcard": {"userDescription": f"*{term_name.lower()}*"}}
+                                        ]
+                                    }}
+                                ]
+                            }
+                        }
+                    },
+                    "attributes": [
+                        "guid", "typeName", "name", "qualifiedName", "description", 
+                        "userDescription", "certificateStatus", "ownerUsers", "ownerGroups",
+                        "assetTags", "connectionName", "connectorName", "viewScore",
+                        "popularityScore", "starredCount", "displayName"
+                    ],
+                    "size": 30
+                }
+                
+                response = requests.post(
+                    f"{self.base_url}/api/meta/search/indexsearch",
+                    headers={
+                        "Authorization": f"Bearer {self.api_token}",
+                        "Content-Type": "application/json"
+                    },
+                    json=search_body
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "entities" in data and data["entities"]:
+                        print(f"✅ Fallback search found {len(data['entities'])} assets")
+                        assets = self._process_api_entities(data["entities"])
+                        all_assets.extend(assets)
+                    else:
+                        print("❌ No assets found in fallback search")
+                else:
+                    print(f"❌ Fallback search failed: {response.status_code}")
+                    
+            except Exception as e:
+                print(f"❌ Fallback search error: {e}")
+        
+        # Remove duplicates and limit results
+        unique_assets = []
+        seen_guids = set()
+        for asset in all_assets:
+            if asset.get("guid") and asset["guid"] not in seen_guids:
+                unique_assets.append(asset)
+                seen_guids.add(asset["guid"])
+        
+        # Limit to 40 assets total
+        final_assets = unique_assets[:40]
+        print(f"🎯 Final result: {len(final_assets)} unique assets found")
+        
+        return final_assets
     
     def _process_sdk_assets(self, assets: List) -> List[Dict[str, Any]]:
         """Process assets returned by Atlan SDK into standardized format"""
